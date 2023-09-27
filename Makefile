@@ -13,7 +13,8 @@ INSTALL ?= install
 PREFIX ?= /usr/local
 SHAREDIR ?= ${PREFIX}/share
 
-SRC = abduco.c
+SRC = debug.c client.c server.c abduco.c
+OBJ = debug.o client.o server.o abduco.o
 
 all: abduco
 
@@ -23,8 +24,10 @@ config.h:
 config.mk:
 	@touch $@
 
-abduco: config.h config.mk *.c
-	${CC} ${CFLAGS} ${CFLAGS_STD} ${CFLAGS_AUTO} ${CFLAGS_EXTRA} ${SRC} ${LDFLAGS} ${LDFLAGS_STD} ${LDFLAGS_AUTO} -o $@
+%.o: %.c abduco.h
+	${CC} ${CFLAGS} ${CFLAGS_STD} ${CFLAGS_AUTO} ${CFLAGS_EXTRA} -c $< -o $@
+abduco: abduco.h config.h config.mk ${OBJ}
+	${CC} ${OBJ} ${LDFLAGS} ${LDFLAGS_STD} ${LDFLAGS_AUTO} -o $@
 
 debug: clean
 	make CFLAGS_EXTRA='${CFLAGS_DEBUG}'

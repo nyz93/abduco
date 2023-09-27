@@ -7,3 +7,5 @@
 *.gcov
 *.html
 *.o
+compile_commands.json
+.cache
