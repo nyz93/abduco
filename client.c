@@ -67,8 +67,8 @@ int client_mainloop(void) {
 	client.need_resize = true;
 	Packet pkt = {
 		.type = MSG_ATTACH,
-		.u.i = client.flags,
-		.len = sizeof(pkt.u.i),
+		.u.flags = client.flags,
+		.len = sizeof(pkt.u.flags),
 	};
 	client_send_packet(&pkt);
 
@@ -111,7 +111,7 @@ int client_mainloop(void) {
 				case MSG_EXIT:
 					client_send_packet(&pkt);
 					close(server.socket);
-					return pkt.u.i;
+					return pkt.u.exit_code;
 				}
 			}
 		}

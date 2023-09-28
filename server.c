@@ -154,10 +154,17 @@ static Client *server_accept_client(void) {
 
 	Packet pkt = {
 		.type = MSG_PID,
-		.len = sizeof pkt.u.l,
-		.u.l = getpid(),
+		.len = sizeof pkt.u.pid,
+		.u.pid = getpid(),
 	};
 	server_send_packet(c, &pkt);
+	Packet pkt2 = {
+		.type = MSG_INFO,
+		.len = sizeof pkt.u.info,
+	};
+	strncpy(pkt2.u.info.base_path, server.base_path, sizeof pkt.u.info.base_path);
+	strncpy(pkt2.u.info.cmdline, server.cmdline, sizeof pkt.u.info.cmdline);
+	server_send_packet(c, &pkt2);
 
 	return c;
 error:
@@ -316,7 +323,7 @@ void server_mainloop(void) {
 					server_write_pty(&client_packet);
 					break;
 				case MSG_ATTACH:
-					c->flags = client_packet.u.i;
+					c->flags = client_packet.u.flags;
 					if (c->flags & CLIENT_LOWPRIORITY)
 						server_sink_client();
 					server_send_screen_buffer(c);
@@ -368,8 +375,8 @@ void server_mainloop(void) {
 				if (server.exit_status != -1) {
 					Packet pkt = {
 						.type = MSG_EXIT,
-						.u.i = server.exit_status,
-						.len = sizeof(pkt.u.i),
+						.u.exit_code = server.exit_status,
+						.len = sizeof(pkt.u.exit_code),
 					};
 					if (!server_send_packet(c, &pkt))
 						FD_SET_MAX(c->socket, &new_writefds, new_fdmax);

@@ -15,6 +15,7 @@
  */
 
 #include "abduco.h"
+#include <unistd.h>
 Server server = { .running = true, .exit_status = -1, .host = "@localhost", .screen_rows = 0 };
 Client client;
 struct termios orig_term, cur_term;
@@ -78,7 +79,7 @@ bool recv_packet(int socket, Packet *pkt) {
 	ssize_t len = read_all(socket, (char*)pkt, packet_header_size());
 	if (len <= 0 || len != packet_header_size())
 		return false;
-	if (pkt->len > sizeof(pkt->u.msg)) {
+	if (pkt->len > sizeof(pkt->u.msg) && pkt->len > sizeof(pkt->u.info)) {
 		pkt->len = 0;
 		return false;
 	}
@@ -149,9 +150,42 @@ static pid_t session_exists(const char *name) {
 	if ((server.socket = session_connect(name)) == -1)
 		return pid;
 	if (client_recv_packet(&pkt) && pkt.type == MSG_PID)
-		pid = pkt.u.l;
+		pid = pkt.u.pid;
 	close(server.socket);
 	return pid;
+}
+
+typedef struct {
+	char* base_path;
+	char* cmdline;
+	pid_t pid;
+} SessionInfo;
+static SessionInfo read_session_info(const char *name) {
+	Packet pkt;
+	SessionInfo ret = { .base_path = NULL, .cmdline = NULL, .pid = 0};
+	if ((server.socket = session_connect(name)) == -1) {
+		return ret;
+	}
+	if(client_recv_packet(&pkt) && pkt.type == MSG_PID) {
+		ret.pid = pkt.u.pid;
+	} else {
+		goto close;
+	}
+	if(client_recv_packet(&pkt) && pkt.type == MSG_INFO) {
+		ret.base_path = malloc(sizeof pkt.u.info.base_path);
+		ret.cmdline = malloc(sizeof pkt.u.info.cmdline);
+		strncpy(ret.base_path, pkt.u.info.base_path, sizeof pkt.u.info.base_path);
+		strncpy(ret.cmdline, pkt.u.info.cmdline, sizeof pkt.u.info.cmdline);
+	}
+close:
+	close(server.socket);
+	return ret;
+}
+
+static void session_info(const char *name) {
+	SessionInfo rv = read_session_info(name);
+	puts(rv.base_path);
+	free(rv.base_path);
 }
 
 static bool session_alive(const char *name) {
@@ -443,7 +477,7 @@ static int session_comparator(const struct dirent **a, const struct dirent **b) 
 	return sa.st_atime < sb.st_atime ? -1 : 1;
 }
 
-static int list_session(void) {
+static int list_session(bool quiet) {
 	if (!create_socket_dir(&sockaddr))
 		return 1;
 	if (chdir(sockaddr.sun_path) == -1)
@@ -452,24 +486,27 @@ static int list_session(void) {
 	int n = scandir(sockaddr.sun_path, &namelist, session_filter, session_comparator);
 	if (n < 0)
 		return 1;
-	printf("Active sessions (on host %s)\n", server.host+1);
+	if(isatty(STDOUT_FILENO)) {
+		printf("Active sessions (on host %s)\n", server.host+1);
+	}
 	while (n--) {
 		struct stat sb; char buf[255];
 		if (stat(namelist[n]->d_name, &sb) == 0 && S_ISSOCK(sb.st_mode)) {
-			pid_t pid = 0;
-			strftime(buf, sizeof(buf), "%a%t %F %T", localtime(&sb.st_mtime));
+			SessionInfo info;
+			strftime(buf, sizeof(buf), "%a %F %T", localtime(&sb.st_mtime));
 			char status = ' ';
 			char *local = strstr(namelist[n]->d_name, server.host);
 			if (local) {
 				*local = '\0'; /* truncate hostname if we are local */
-				if (!(pid = session_exists(namelist[n]->d_name)))
+				info = read_session_info(namelist[n]->d_name);
+				if (info.base_path == NULL)
 					continue;
 			}
 			if (sb.st_mode & S_IXUSR)
 				status = '*';
 			else if (sb.st_mode & S_IXGRP)
 				status = '+';
-			printf("%c %s\t%jd\t%s\n", status, buf, (intmax_t)pid, namelist[n]->d_name);
+			printf("%c\t%s\t%jd\t%s\t%s\t%s\n", status, buf, (intmax_t)info.pid, namelist[n]->d_name, info.base_path, info.cmdline);
 		}
 		free(namelist[n]);
 	}
@@ -491,12 +528,13 @@ int main(int argc, char *argv[]) {
 	server.name = basename(argv[0]);
 	gethostname(server.host+1, sizeof(server.host) - 1);
 
-	while ((opt = getopt(argc, argv, "aAclne:fpqrvL:")) != -1) {
+	while ((opt = getopt(argc, argv, "aAcilne:fpqrvL:")) != -1) {
 		switch (opt) {
 		case 'a':
 		case 'A':
 		case 'c':
 		case 'n':
+		case 'i':
 			action = opt;
 			break;
 		case 'e':
@@ -532,7 +570,7 @@ int main(int argc, char *argv[]) {
 			break;
 		case 'v':
 			puts("abduco-"VERSION" © 2013-2018 Marc André Tanner");
-			exit(EXIT_SUCCESS);
+			return EXIT_SUCCESS;
 		default:
 			usage();
 		}
@@ -542,11 +580,24 @@ int main(int argc, char *argv[]) {
 	if (optind < argc)
 		server.session_name = argv[optind];
 
+	if(getcwd(server.base_path, PATH_MAX) == NULL) {
+		strcpy(server.base_path, "<unk>");
+	};
+
 	/* if yet more trailing arguments, they must be the command */
 	if (optind + 1 < argc)
 		cmd = &argv[optind + 1];
 	else
 		cmd = default_cmd;
+
+	char** cmdline = cmd;
+	char* join = server.cmdline;
+	join = stpcpy(join, *cmdline);
+	for(int i = 1; cmdline[i] != NULL && join < server.cmdline+sizeof(server.cmdline); i++) {
+		*join = ' ';
+		join = stpcpy(join + 1, cmdline[i]);
+	}
+
 
 	if (server.session_name && !isatty(STDIN_FILENO))
 		passthrough = true;
@@ -559,7 +610,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!action && !server.session_name)
-		exit(list_session());
+		exit(list_session(quiet));
 	if (!action || !server.session_name)
 		usage();
 
@@ -605,6 +656,9 @@ int main(int argc, char *argv[]) {
 			action = 'c';
 			goto redo;
 		}
+		break;
+	case 'i':
+		session_info(server.session_name);
 		break;
 	}
 

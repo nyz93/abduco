@@ -37,17 +37,11 @@
 #include <sys/un.h>
 #include <sys/queue.h>
 #if defined(__linux__) || defined(__CYGWIN__)
+# include <linux/limits.h>
 # include <pty.h>
-#elif defined(__FreeBSD__) || defined(__DragonFly__)
-# include <libutil.h>
-#elif defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
+#elif defined(__APPLE__)
 # include <util.h>
-#endif
-
-#if defined(_AIX)
-# include "forkpty-aix.c"
-#elif defined(__sun)
-# include "forkpty-sunos.c"
+# include <sys/syslimits.h>
 #endif
 
 #define countof(arr) (sizeof(arr) / sizeof((arr)[0]))
@@ -59,6 +53,7 @@ enum PacketType {
 	MSG_RESIZE  = 3,
 	MSG_EXIT    = 4,
 	MSG_PID     = 5,
+    MSG_INFO    = 6,
 };
 
 typedef struct {
@@ -67,11 +62,16 @@ typedef struct {
 	union {
 		char msg[4096 - 2*sizeof(uint32_t)];
 		struct {
+			char base_path[PATH_MAX];
+			char cmdline[1024];
+		} info;
+		struct {
 			uint16_t rows;
 			uint16_t cols;
 		} ws;
-		uint32_t i;
-		uint64_t l;
+		uint32_t exit_code;
+		uint32_t flags;
+		uint64_t pid;
 	} u;
 } Packet;
 
@@ -114,8 +114,10 @@ typedef struct {
 	volatile sig_atomic_t running;
 	const char *name;
 	const char *session_name;
+    char base_path[PATH_MAX];
 	char host[255];
 	bool read_pty;
+	char cmdline[1024];
 } Server;
 
 extern Server server;
@@ -123,10 +125,14 @@ extern Client client;
 extern struct termios orig_term, cur_term;
 extern bool has_term, alternate_buffer, quiet, passthrough;
 extern int screen_max_rows;
+extern char KEY_DETACH;
+extern char KEY_REDRAW;
 
 static struct sockaddr_un sockaddr = {
 	.sun_family = AF_UNIX,
 };
+
+extern struct Dir socket_dirs[4];
 
 void client_setup_terminal(void);
 int client_mainloop(void);
