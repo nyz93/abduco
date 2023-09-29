@@ -56,11 +56,13 @@ enum PacketType {
     MSG_INFO    = 6,
 };
 
+#define MAX_MSG 4096 - 2*sizeof(uint32_t)
+
 typedef struct {
 	uint32_t type;
 	uint32_t len;
 	union {
-		char msg[4096 - 2*sizeof(uint32_t)];
+		char msg[MAX_MSG];
 		struct {
 			char base_path[PATH_MAX];
 			char cmdline[1024];

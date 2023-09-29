@@ -1,4 +1,5 @@
 #include "abduco.h"
+#include <assert.h>
 #define FD_SET_MAX(fd, set, maxfd) do { \
 		FD_SET(fd, set);        \
 		if (fd > maxfd)         \
@@ -190,12 +191,18 @@ static void server_send_screen_buffer(Client *c) {
 	struct entry *np;
 
 	TAILQ_FOREACH_REVERSE(np, &server.screen, screenhead, entries) {
-		Packet pkt = {
-			.type = MSG_CONTENT,
-			.len = np->len,
-		};
-		strncpy(pkt.u.msg, np->data, np->len);
-		server_send_packet(c, &pkt);
+		char* data = np->data;
+		int to_send = np->len;
+		while(to_send > 0) {
+			int sent = to_send > MAX_MSG ? MAX_MSG : to_send;
+			Packet pkt = {
+				.type = MSG_CONTENT,
+				.len = sent,
+			};
+			strncpy(pkt.u.msg, np->data, sent);
+			server_send_packet(c, &pkt);
+			to_send -= sent;
+		}
 	}
 }
 
